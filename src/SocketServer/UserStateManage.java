@@ -38,7 +38,7 @@ public class UserStateManage extends Thread {
         this.scanTime = scanTime;
     }
 
-    private Gson gson;
+    private Gson gson = new Gson();
     /**
      *在线用户状态列表
      */
