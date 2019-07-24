@@ -292,63 +292,48 @@ public class UserStateManage extends Thread {
         return hashLock;
     }
 
-
     public void setHashLock(Object hashLock) {
         this.hashLock = hashLock;
     }
-
 
     public String getHost() {
         return host;
     }
 
-
     public void setHost(String host) {
         this.host = host;
     }
-
 
     public int getStateReportPort() {
         return port;
     }
 
-
     public void setStateReportPort(int stateReportPort) {
         this.port = stateReportPort;
     }
-
 
     public String getEndFlag() {
         return endFlag;
     }
 
-
     public void setEndFlag(String endFlag) {
         this.endFlag = endFlag;
     }
-
 
     public int getScanTime() {
         return scanTime;
     }
 
-
     public void setScanTime(int scanTime) {
         this.scanTime = scanTime;
     }
-
 
     public static HashMap<Integer, UserState> getUserStateList() {
         return userStateList;
     }
 
-
     public static int getWorkThreadNum() {
         return workThreadNum;
     }
 
-
-    public static int getSocketConnect() {
-        return socketConnect;
-    }
 }
