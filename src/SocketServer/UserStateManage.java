@@ -4,67 +4,221 @@ import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-
 import java.util.Date;
-import java.util.HashMap;
 import java.util.Map;
-
-
+import java.util.concurrent.ConcurrentHashMap;
 import Model.User;
 import Model.UserState;
 import com.google.gson.Gson;
-
 
 /**
  * @author 梁昊
  * @date:2019/7/23
  */
 public class UserStateManage extends Thread {
+    /**
+     * 工作线程类
+     */
+    class Handler implements Runnable {
+        private Socket socket;
+        private UserState us = null;
+        private User newUser = null;
+        private int userId;
+        private int userState;
+
+        /**
+         * 构造函数，从调用者那里取得socket
+         *
+         * @param socket 指定的socket
+         * @author dream
+         */
+        public Handler(Socket socket) {
+            this.socket = socket;
+        }
+
+        /**
+         * 从指定的socket中得到输入流
+         *
+         * @param socket 指定的socket
+         * @return 返回BufferedReader
+         * @author dream
+         */
+        private BufferedReader getReader(Socket socket) throws IOException {
+            InputStream is = null;
+            BufferedReader br = null;
+            DataOutputStream out = null;
+            try {
+                is = socket.getInputStream();
+                br = new BufferedReader(new InputStreamReader(is));
+                out = new DataOutputStream(socket.getOutputStream());
+                out.writeUTF(String.format("Server:%s", br.readLine()));
+            } finally {
+                out.close();
+            }
+            return br;
+        }
+
+        public void run() {
+            try {
+                workThreadNum = workThreadNum + 1;
+                System.out.println("【第" + workThreadNum + "个的连接:" + socket.getInetAddress() + ":" + socket.getPort() + "】");
+                BufferedReader br = getReader(socket);
+                String meg = null;
+                StringBuffer report = new StringBuffer();
+                while ((meg = br.readLine()) != null) {
+                    report.append(meg);
+                    if (meg.contains(csEndFlag)) {
+                        us = getReporterUserState(meg, socket);
+                        synchronized (hashLock) {
+                            newUserStateList.put(userId, us);
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                System.out.println("【客户:" + newUser.getUser_id() + "已经断开连接！】");
+                newUserStateList.remove(userId);
+                announceStateChange(userId, -1);
+            } finally {
+                if (socket != null) {
+                    try {
+                        //断开连接
+                        socket.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+
+        private UserState getReporterUserState(String meg, Socket socket) {
+            UserState us = new UserState();
+            try {
+                newUser = gson.fromJson(meg, User.class);
+                userId = newUser.getUser_id();
+                userState = newUser.getUser_state();
+                us.setFlag(2);
+                us.setUser_state(userState);
+                us.setUser_id(userId);
+                us.setUser_ip(newUser.getUser_ip());
+                us.setUser_port(newUser.getUser_port());
+            } catch (Exception e) {
+                System.out.println("【来自客户端的信息不是一个合法的心跳包协议】");
+            }
+            return us;
+        }
+    }
+
+    /**
+     * 扫描线程
+     */
+    class scan implements Runnable {
+        public void run() {
+            while (true) {
+                System.out.println("*******" + new Date() + "：扫描线程开始扫描" + "*******");
+                synchronized (hashLock) {
+                    if (!newUserStateList.isEmpty()) {
+                        //遍历在线用户列表
+                        for (Map.Entry<Integer, UserState> entry : newUserStateList.entrySet()) {
+                            int flag = entry.getValue().getFlag();
+                            if ((flag - 1) < 0) {
+                                //在这里通知该用户的好友其状态发生改变
+//                                 announceStateChange(entry.getKey() , 0);
+                            } else {
+                                entry.getValue().setFlag(flag - 1);
+                                newUserStateList.put(entry.getKey(), entry.getValue());
+                            }
+                            System.out.println(entry.getKey() + "-->" + entry.getValue().toString());
+                        }
+                    } else {
+                        System.out.println("现在还没有在线用户！");
+                    }
+                }
+                //实现定时扫描
+                try {
+                    sleep(scanTime);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    /**
+     * 默认构造函数
+     */
     public UserStateManage() {
         SetParam("127.0.0.1", 60000, 1800);
     }
 
+    /**
+     * @param host ip
+     * @param port 端口
+     */
     public UserStateManage(String host, int port) {
         SetParam(host, port, 1800);
     }
 
+    /**
+     * @param host     ip
+     * @param port     端口
+     * @param scanTime 心跳周期
+     */
     public UserStateManage(String host, int port, int scanTime) {
         SetParam(host, port, scanTime);
     }
 
+    /**
+     * @param host     ip
+     * @param port     端口
+     * @param scanTime 心跳周期
+     */
     private void SetParam(String host, int port, int scanTime) {
         this.host = host;
         this.port = port;
         this.scanTime = scanTime;
     }
 
+    /**
+     * 序列化组件
+     */
     private Gson gson = new Gson();
+
     /**
-     *在线用户状态列表
+     * 在线用户状态列表
      */
-    static HashMap<Integer, UserState> userStateList = new HashMap<Integer, UserState>();
-    Object hashLock = new Object();
+    private static ConcurrentHashMap<Integer, UserState> newUserStateList = new ConcurrentHashMap<>();
+
     /**
-     *当前的连接数和工作线程数
+     * Lock
      */
-    static int workThreadNum = 0;
-    static int socketConnect = 0;
+    private Object hashLock = new Object();
+    /**
+     * 当前的连接数和工作线程数
+     */
+    private static int workThreadNum = 0;
+    /**
+     * socket连接数量
+     */
+    private static int socketConnect = 0;
     private ServerSocket serverSocket;
     /**
      * 服务器IP
      */
-    private String host = "127.0.0.1";
+    private String host;
     /**
      * 服务器端口
      */
-    private int port = 60000;
+    private int port;
     /**
      * 设置心跳包的结束标记
      */
-    String endFlag = "</protocol>";
-    CharSequence csEndFlag = endFlag.subSequence(0, 10);
+    private String endFlag = "</protocol>";
     /**
-     *扫描间隔
+     * 结束符
+     */
+    private CharSequence csEndFlag = endFlag.subSequence(0, 10);
+    /**
+     * 扫描间隔
      */
     private int scanTime;
 
@@ -128,136 +282,15 @@ public class UserStateManage extends Thread {
     }
 
     /**
-     *工作线程类
+     * 通知好友
+     *
+     * @param userId 好友ID
+     * @param state  状态
      */
-    class Handler implements Runnable {
-        private Socket socket;
-        UserState us = null;
-        User newUser = null;
-        private int userId;
-        private int userState;
-
-        /**
-         * 构造函数，从调用者那里取得socket
-         *
-         * @param socket 指定的socket
-         * @author dream
-         */
-        public Handler(Socket socket) {
-            this.socket = socket;
-        }
-
-        /**
-         * 从指定的socket中得到输入流
-         *
-         * @param socket 指定的socket
-         * @return 返回BufferedReader
-         * @author dream
-         */
-        private BufferedReader getReader(Socket socket) throws IOException {
-            InputStream is = null;
-            BufferedReader br = null;
-            DataOutputStream out = null;
-            try {
-                is = socket.getInputStream();
-                br = new BufferedReader(new InputStreamReader(is));
-                out = new DataOutputStream(socket.getOutputStream());
-                out.writeUTF(String.format("Server:%s",br.readLine()));
-            }
-            finally {
-                out.close();
-            }
-            return br;
-        }
-
-        public void run() {
-            try {
-                workThreadNum = workThreadNum + 1;
-                System.out.println("【第" + workThreadNum + "个的连接:" + socket.getInetAddress() + ":" + socket.getPort() + "】");
-                BufferedReader br = getReader(socket);
-                String meg = null;
-                StringBuffer report = new StringBuffer();
-                while ((meg = br.readLine()) != null) {
-                    report.append(meg);
-                    if (meg.contains(csEndFlag)) {
-                        us = getReporterUserState(meg, socket);
-                        synchronized (hashLock) {
-                            userStateList.put(userId, us);
-                        }
-                    }
-                }
-            } catch (IOException e) {
-                System.out.println("【客户:" + newUser.getUser_id() + "已经断开连接！】");
-                userStateList.remove(userId);
-                announceStateChange(userId, -1);
-            } finally {
-                if (socket != null) {
-                    try {
-                        //断开连接
-                        socket.close();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        }
-
-        private UserState getReporterUserState(String meg, Socket socket) {
-            UserState us = new UserState();
-            try {
-                newUser = gson.fromJson(meg, User.class);
-                userId = newUser.getUser_id();
-                userState = newUser.getUser_state();
-                us.setFlag(2);
-                us.setUser_state(userState);
-                us.setUser_id(userId);
-                us.setUser_ip(newUser.getUser_ip());
-                us.setUser_port(newUser.getUser_port());
-            } catch (Exception e) {
-                System.out.println("【来自客户端的信息不是一个合法的心跳包协议】");
-            }
-            return us;
-        }
-    }
-
-    /**
-     *扫描线程
-     */
-    class scan implements Runnable {
-        public void run() {
-            while (true) {
-                System.out.println("*******" + new Date() + "：扫描线程开始扫描" + "*******");
-                synchronized (hashLock) {
-                    if (!userStateList.isEmpty()) {
-                        //遍历在线用户列表
-                        for (Map.Entry<Integer, UserState> entry : userStateList.entrySet()) {
-                            int flag = entry.getValue().getFlag();
-                            if ((flag - 1) < 0) {
-                                //在这里通知该用户的好友其状态发生改变
-//                                 announceStateChange(entry.getKey() , 0);
-                            } else {
-                                entry.getValue().setFlag(flag - 1);
-                                userStateList.put(entry.getKey(), entry.getValue());
-                            }
-                            System.out.println(entry.getKey() + "-->" + entry.getValue().toString());
-                        }
-                    } else {
-                        System.out.println("现在还没有在线用户！");
-                    }
-                }
-                //实现定时扫描
-                try {
-                    sleep(scanTime);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-    }
-
     private void announceStateChange(int userId, int state) {
         System.out.println("通知其好友!");
     }
+
     /**
      * 查询一个用户是否在线
      *
@@ -267,7 +300,7 @@ public class UserStateManage extends Thread {
      */
     public boolean isAlive(int userId) {
         synchronized (hashLock) {
-            return userStateList.containsKey(userId);
+            return newUserStateList.containsKey(userId);
         }
     }
 
@@ -280,8 +313,8 @@ public class UserStateManage extends Thread {
      */
     public int getUserState(int userId) {
         synchronized (hashLock) {
-            if (userStateList.containsKey(userId)) {
-                return userStateList.get(userId).getUser_state();
+            if (newUserStateList.containsKey(userId)) {
+                return newUserStateList.get(userId).getUser_state();
             } else {
                 return -1;
             }
@@ -328,8 +361,8 @@ public class UserStateManage extends Thread {
         this.scanTime = scanTime;
     }
 
-    public static HashMap<Integer, UserState> getUserStateList() {
-        return userStateList;
+    public static ConcurrentHashMap<Integer, UserState> getUserStateList() {
+        return newUserStateList;
     }
 
     public static int getWorkThreadNum() {
